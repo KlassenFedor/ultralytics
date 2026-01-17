@@ -101,6 +101,11 @@ from .transformer import (
     TransformerEncoderLayer,
     TransformerLayer,
 )
+from .attention import (
+    EMA,
+    LCA,
+    CoordAtt
+)
 
 __all__ = (
     "AIFI",
@@ -179,4 +184,8 @@ __all__ = (
     "YOLOEDetect",
     "YOLOESegment",
     "v10Detect",
+
+    'EMA',
+    'LCA', 
+    'CoordAtt',
 )
