@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-__all__ = ['EMA', 'LCA', 'CoordAtt', 'EMA_Temp', 'EMA_MultiScale', 'EMA_TIR']
+__all__ = ['EMA', 'LCA', 'CoordAtt', 'EMA_TIR']
 
 
 class EMA(nn.Module):
