@@ -104,7 +104,9 @@ from .transformer import (
 from .attention import (
     EMA,
     LCA,
-    CoordAtt
+    CoordAtt,
+    EMA_Temp,
+    EMA_MultiScale,
 )
 
 __all__ = (
@@ -188,4 +190,7 @@ __all__ = (
     'EMA',
     'LCA', 
     'CoordAtt',
+
+    'EMA_Temp',
+    'EMA_MultiScale',
 )
