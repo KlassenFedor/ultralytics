@@ -179,6 +179,10 @@ class EMA_TIR(nn.Module):
         se_reduction: int = 16,
     ):
         super().__init__()
+
+        c1 = int(c1)
+        factor = int(factor)
+        temperature = float(temperature)
         
         # Сохраняем флаги
         self.use_temperature = use_temperature
