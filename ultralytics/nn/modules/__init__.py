@@ -191,7 +191,5 @@ __all__ = (
     'LCA', 
     'CoordAtt',
 
-    'EMA_Temp',
-    'EMA_MultiScale',
     'EMA_TIR',
 )
