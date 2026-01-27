@@ -1651,7 +1651,11 @@ def parse_model(d, ch, verbose=True):
             args = [c1, c2, *args[1:]]
         elif m is EMA_TIR:
             c1 = ch[f]
-            args = [c1] + args[1:]
+            # args из YAML: [1024, 32, 0.7, True, False, ...]
+            # args[0]=1024 пропускаем (берём c1 из ch[f])
+            # args[1:] = [32, 0.7, True, ...] — это factor, temperature, и т.д.
+            # Нужно вставить c2=None между c1 и factor
+            args = [c1, None] + args[1:]  # [c1, None, 32, 0.7, True, ...]
         else:
             c2 = ch[f]
 
