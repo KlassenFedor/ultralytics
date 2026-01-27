@@ -105,8 +105,7 @@ from .attention import (
     EMA,
     LCA,
     CoordAtt,
-    EMA_Temp,
-    EMA_MultiScale,
+    EMA_TIR,
 )
 
 __all__ = (
