@@ -193,4 +193,5 @@ __all__ = (
 
     'EMA_Temp',
     'EMA_MultiScale',
+    'EMA_TIR',
 )

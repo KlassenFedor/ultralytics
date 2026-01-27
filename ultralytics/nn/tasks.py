@@ -92,7 +92,7 @@ from ultralytics.utils.torch_utils import (
     smart_inference_mode,
     time_sync,
 )
-from ultralytics.nn.modules.attention import EMA, LCA, CoordAtt, EMA_Temp, EMA_MultiScale
+from ultralytics.nn.modules.attention import EMA, LCA, CoordAtt, EMA_Temp, EMA_MultiScale, EMA_TIR
 
 
 class BaseModel(torch.nn.Module):
@@ -1644,7 +1644,7 @@ def parse_model(d, ch, verbose=True):
             c2 = args[0]
             c1 = ch[f]
             args = [*args[1:]]
-        elif m in {EMA, LCA, CoordAtt, EMA_Temp, EMA_MultiScale}:
+        elif m in {EMA, LCA, CoordAtt, EMA_Temp, EMA_MultiScale, EMA_TIR}:
             c1, c2 = ch[f], args[0]
             if c2 != nc:  # если c2 не равен числу классов
                 c2 = make_divisible(min(c2, max_channels) * width, 8)

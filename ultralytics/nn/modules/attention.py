@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-__all__ = ['EMA', 'LCA', 'CoordAtt']
+__all__ = ['EMA', 'LCA', 'CoordAtt', 'EMA_Temp', 'EMA_MultiScale', 'EMA_TIR']
 
 
 class EMA(nn.Module):
@@ -224,4 +224,76 @@ class EMA_MultiScale(nn.Module):
         x12 = x2 * x11
         
         out = x1 + x12
+        return out.view(b, c, h, w)
+
+class EMA_TIR(nn.Module):
+    """EMA-TIR: Thermal Infrared оптимизированный EMA."""
+    def __init__(self, c1, c2=None, factor=32, temperature=0.7, 
+                 use_multiscale=True, use_residual=True):
+        super().__init__()
+        self.groups = factor
+        self.use_multiscale = use_multiscale
+        self.use_residual = use_residual
+        
+        assert c1 // self.groups > 0
+        group_c = c1 // self.groups
+        
+        self.log_temp = nn.Parameter(torch.log(torch.tensor(float(temperature))))
+        
+        if use_residual:
+            self.residual_scale = nn.Parameter(torch.zeros(1))
+        
+        self.agp = nn.AdaptiveAvgPool2d((1, 1))
+        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
+        self.pool_w = nn.AdaptiveAvgPool2d((1, None))
+        self.gn = nn.GroupNorm(group_c, group_c)
+        self.conv1x1 = nn.Conv2d(group_c, group_c, 1)
+        
+        if use_multiscale:
+            self.conv_d1 = nn.Conv2d(group_c, group_c, 3, padding=1, dilation=1)
+            self.conv_d2 = nn.Conv2d(group_c, group_c, 3, padding=2, dilation=2)
+            self.conv_fuse = nn.Conv2d(group_c * 2, group_c, 1)
+        else:
+            self.conv3x3 = nn.Conv2d(group_c, group_c, 3, padding=1)
+
+    @property
+    def temperature(self):
+        return torch.exp(self.log_temp).clamp(min=0.1, max=5.0)
+    
+    def scaled_softmax(self, x, dim=-1):
+        return F.softmax(x / self.temperature, dim=dim)
+
+    def forward(self, x):
+        b, c, h, w = x.size()
+        group = c // self.groups
+        x_grouped = x.view(b * self.groups, group, h, w)
+        identity = x_grouped
+        
+        x_h = self.pool_h(x_grouped)
+        x_w = self.pool_w(x_grouped).permute(0, 1, 3, 2)
+        
+        hw = self.conv1x1(torch.cat([x_h, x_w], dim=2))
+        x_h, x_w = torch.split(hw, [h, w], dim=2)
+        
+        x1 = self.gn(x_h * x_w.permute(0, 1, 3, 2))
+        x1 = self.conv1x1(x1)
+        x1 = x_grouped * self.scaled_softmax(self.agp(x1).view(b * self.groups, group, 1, 1))
+        
+        if self.use_multiscale:
+            f1 = self.conv_d1(x_grouped)
+            f2 = self.conv_d2(x_grouped)
+            x2 = self.conv_fuse(torch.cat([f1, f2], dim=1))
+        else:
+            x2 = self.conv3x3(x_grouped)
+        
+        x2_h = self.pool_h(x2)
+        x2_w = self.pool_w(x2).permute(0, 1, 3, 2)
+        x11 = self.scaled_softmax(self.gn(x2_h * x2_w.permute(0, 1, 3, 2)))
+        x12 = x2 * x11
+        
+        out = x1 + x12
+        
+        if self.use_residual:
+            out = out + self.residual_scale * identity
+        
         return out.view(b, c, h, w)
