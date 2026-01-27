@@ -181,18 +181,23 @@ class EMA_TIR(nn.Module):
         super().__init__()
 
         c1 = int(c1)
-        factor = int(factor)
+        factor = int(factor) if factor else 32
         temperature = float(temperature)
+        contrast_kernel = int(contrast_kernel)
+        se_reduction = int(se_reduction)
         
         # Сохраняем флаги
-        self.use_temperature = use_temperature
-        self.use_multiscale = use_multiscale
-        self.use_contrast = use_contrast
-        self.use_residual = use_residual
-        self.use_se = use_se
+        self.use_temperature = bool(use_temperature)
+        self.use_multiscale = bool(use_multiscale)
+        self.use_contrast = bool(use_contrast)
+        self.use_residual = bool(use_residual)
+        self.use_se = bool(use_se)
         
+        # Groups
         self.groups = factor
-        assert c1 // self.groups > 0, f"c1={c1} должно делиться на factor={factor}"
+        assert self.groups > 0, f"factor must be > 0, got {factor}"
+        assert c1 % self.groups == 0, f"c1={c1} must be divisible by factor={self.groups}"
+        
         group_c = c1 // self.groups
         
         # ========== Temperature Scaling ==========
