@@ -16,8 +16,24 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
-from ultralytics.utils import ARM64, IS_JETSON, LINUX, LOGGER, PYTHON_VERSION, ROOT, YAML, is_jetson
-from ultralytics.utils.checks import check_requirements, check_suffix, check_version, check_yaml, is_rockchip
+from ultralytics.utils import (
+    ARM64,
+    IS_JETSON,
+    LINUX,
+    LOGGER,
+    PYTHON_VERSION,
+    ROOT,
+    YAML,
+    is_jetson,
+)
+from ultralytics.utils.checks import (
+    check_executorch_requirements,
+    check_requirements,
+    check_suffix,
+    check_version,
+    check_yaml,
+    is_rockchip,
+)
 from ultralytics.utils.downloads import attempt_download_asset, is_url
 from ultralytics.utils.nms import non_max_suppression
 
@@ -132,14 +148,14 @@ class AutoBackend(nn.Module):
         _model_type: Determine the model type from file path.
 
     Examples:
-        >>> model = AutoBackend(model="yolo11n.pt", device="cuda")
+        >>> model = AutoBackend(model="yolo26n.pt", device="cuda")
         >>> results = model(img)
     """
 
     @torch.no_grad()
     def __init__(
         self,
-        model: str | torch.nn.Module = "yolo11n.pt",
+        model: str | torch.nn.Module = "yolo26n.pt",
         device: torch.device = torch.device("cpu"),
         dnn: bool = False,
         data: str | Path | None = None,
@@ -221,6 +237,7 @@ class AutoBackend(nn.Module):
             for p in model.parameters():
                 p.requires_grad = False
             self.model = model  # explicitly assign for to(), cpu(), cuda(), half()
+            end2end = getattr(model, "end2end", False)
 
         # TorchScript
         elif jit:
@@ -322,7 +339,7 @@ class AutoBackend(nn.Module):
                 batch = metadata["batch"]
                 dynamic = metadata.get("args", {}).get("dynamic", dynamic)
             # OpenVINO inference modes are 'LATENCY', 'THROUGHPUT' (not recommended), or 'CUMULATIVE_THROUGHPUT'
-            inference_mode = "CUMULATIVE_THROUGHPUT" if batch > 1 and dynamic else "LATENCY"
+            inference_mode = "CUMULATIVE_THROUGHPUT" if dynamic and batch > 1 else "LATENCY"
             ov_compiled_model = core.compile_model(
                 ov_model,
                 device_name=device_name,
@@ -497,11 +514,11 @@ class AutoBackend(nn.Module):
         elif paddle:
             LOGGER.info(f"Loading {w} for PaddlePaddle inference...")
             check_requirements(
-                "paddlepaddle-gpu"
+                "paddlepaddle-gpu>=3.0.0,!=3.3.0"  # exclude 3.3.0 https://github.com/PaddlePaddle/Paddle/issues/77340
                 if torch.cuda.is_available()
                 else "paddlepaddle==3.0.0"  # pin 3.0.0 for ARM64
                 if ARM64
-                else "paddlepaddle>=3.0.0"
+                else "paddlepaddle>=3.0.0,!=3.3.0"  # exclude 3.3.0 https://github.com/PaddlePaddle/Paddle/issues/77340
             )
             import paddle.inference as pdi
 
@@ -545,11 +562,16 @@ class AutoBackend(nn.Module):
         # NCNN
         elif ncnn:
             LOGGER.info(f"Loading {w} for NCNN inference...")
-            check_requirements("git+https://github.com/Tencent/ncnn.git" if ARM64 else "ncnn", cmds="--no-deps")
+            check_requirements("ncnn", cmds="--no-deps")
             import ncnn as pyncnn
 
             net = pyncnn.Net()
-            net.opt.use_vulkan_compute = cuda
+            if isinstance(cuda, torch.device):
+                net.opt.use_vulkan_compute = cuda
+            elif isinstance(device, str) and device.startswith("vulkan"):
+                net.opt.use_vulkan_compute = True
+                net.set_vulkan_device(int(device.split(":")[1]))
+                device = torch.device("cpu")
             w = Path(w)
             if not w.is_file():  # if not *.param
                 w = next(w.glob("*.param"))  # get *.param file from *_ncnn_model dir
@@ -610,9 +632,9 @@ class AutoBackend(nn.Module):
         # ExecuTorch
         elif pte:
             LOGGER.info(f"Loading {w} for ExecuTorch inference...")
-            # TorchAO release compatibility table bug https://github.com/pytorch/ao/issues/2919
-            check_requirements("setuptools<71.0.0")  # Setuptools bug: https://github.com/pypa/setuptools/issues/4483
-            check_requirements(("executorch==1.0.1", "flatbuffers"))
+
+            check_executorch_requirements()
+
             from executorch.runtime import Runtime
 
             w = Path(w)
@@ -642,7 +664,7 @@ class AutoBackend(nn.Module):
             for k, v in metadata.items():
                 if k in {"stride", "batch", "channels"}:
                     metadata[k] = int(v)
-                elif k in {"imgsz", "names", "kpt_shape", "kpt_names", "args"} and isinstance(v, str):
+                elif k in {"imgsz", "names", "kpt_shape", "kpt_names", "args", "end2end"} and isinstance(v, str):
                     metadata[k] = ast.literal_eval(v)
             stride = metadata["stride"]
             task = metadata["task"]
@@ -651,7 +673,7 @@ class AutoBackend(nn.Module):
             names = metadata["names"]
             kpt_shape = metadata.get("kpt_shape")
             kpt_names = metadata.get("kpt_names")
-            end2end = metadata.get("args", {}).get("nms", False)
+            end2end = metadata.get("end2end", False) or metadata.get("args", {}).get("nms", False)
             dynamic = metadata.get("args", {}).get("dynamic", dynamic)
             ch = metadata.get("channels", 3)
         elif not (pt or triton or nn_module):
@@ -881,7 +903,7 @@ class AutoBackend(nn.Module):
                                 x[:, 6::3] *= h
                     y.append(x)
             # TF segment fixes: export is reversed vs ONNX export and protos are transposed
-            if len(y) == 2:  # segment with (det, proto) output order reversed
+            if self.task == "segment":  # segment with (det, proto) output order reversed
                 if len(y[1].shape) != 4:
                     y = list(reversed(y))  # should be y = (1, 116, 8400), (1, 160, 160, 32)
                 if y[1].shape[-1] == 6:  # end-to-end model

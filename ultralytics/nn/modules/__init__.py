@@ -78,15 +78,19 @@ from .conv import (
 )
 from .head import (
     OBB,
+    OBB26,
     Classify,
     Detect,
     LRPCHead,
     Pose,
+    Pose26,
     RTDETRDecoder,
     Segment,
+    Segment26,
     WorldDetect,
     YOLOEDetect,
     YOLOESegment,
+    YOLOESegment26,
     v10Detect,
 )
 from .transformer import (
@@ -121,6 +125,7 @@ __all__ = (
     "ELAN1",
     "MLP",
     "OBB",
+    "OBB26",
     "PSA",
     "SPP",
     "SPPELAN",
@@ -167,6 +172,7 @@ __all__ = (
     "MSDeformAttn",
     "MaxSigmoidAttnBlock",
     "Pose",
+    "Pose26",
     "Proto",
     "RTDETRDecoder",
     "RepC3",
@@ -176,6 +182,7 @@ __all__ = (
     "ResNetLayer",
     "SCDown",
     "Segment",
+    "Segment26",
     "SpatialAttention",
     "TorchVision",
     "TransformerBlock",
@@ -184,6 +191,7 @@ __all__ = (
     "WorldDetect",
     "YOLOEDetect",
     "YOLOESegment",
+    "YOLOESegment26",
     "v10Detect",
 
     'EMA',
