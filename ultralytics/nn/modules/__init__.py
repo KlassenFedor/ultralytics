@@ -110,6 +110,7 @@ from .attention import (
     LCA,
     CoordAtt,
     EMA_TIR,
+    EMA_orig,
 )
 
 __all__ = (
@@ -199,4 +200,5 @@ __all__ = (
     'CoordAtt',
 
     'EMA_TIR',
+    'EMA_orig',
 )
