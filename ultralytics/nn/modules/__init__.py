@@ -201,4 +201,5 @@ __all__ = (
 
     'EMA_TIR',
     'EMA_orig',
+    'EMA_orig_fast',
 )

@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-__all__ = ['EMA', 'LCA', 'CoordAtt', 'EMA_TIR', 'EMA_orig']
+__all__ = ['EMA', 'LCA', 'CoordAtt', 'EMA_TIR', 'EMA_orig', 'EMA_orig_fast']
 
 
 class EMA(nn.Module):
@@ -82,6 +82,62 @@ class EMA_orig(nn.Module):
         x22 = x1.reshape(b * self.groups, c // self.groups, -1)  # b*g, c//g, hw
         weights = (torch.matmul(x11, x12) + torch.matmul(x21, x22)).reshape(b * self.groups, 1, h, w)
         return (group_x * weights.sigmoid()).reshape(b, c, h, w)
+    
+
+class EMA_orig_fast(nn.Module):
+    """EMA from paper/repo with inference-friendly ops (same idea, faster kernels)."""
+    def __init__(self, channels, c2=None, factor=32):
+        super().__init__()
+        self.groups = factor
+        assert channels % self.groups == 0, f"channels ({channels}) must be divisible by groups ({self.groups})"
+        cg = channels // self.groups
+
+        self.softmax = nn.Softmax(dim=-1)
+        self.gn = nn.GroupNorm(cg, cg)  # same as original
+        self.conv1x1 = nn.Conv2d(cg, cg, 1, 1, 0)
+        self.conv3x3 = nn.Conv2d(cg, cg, 3, 1, 1)
+
+    def forward(self, x):
+        b, c, h, w = x.shape
+        g = self.groups
+        cg = c // g
+        bg = b * g
+
+        # (b, c, h, w) -> (bg, cg, h, w)
+        group_x = x.reshape(bg, cg, h, w)
+
+        # === Coordinate-like gating branch (same as repo, but mean instead of AdaptiveAvgPool2d(None,*)) ===
+        x_h = group_x.mean(dim=3, keepdim=True)           # (bg, cg, h, 1)
+        x_w = group_x.mean(dim=2, keepdim=True).transpose(2, 3)  # (bg, cg, w, 1)
+
+        hw = self.conv1x1(torch.cat((x_h, x_w), dim=2))   # (bg, cg, h+w, 1)
+        x_h, x_w = hw.split((h, w), dim=2)                # (bg, cg, h,1) and (bg, cg, w,1)
+
+        gate = torch.sigmoid(x_h) * torch.sigmoid(x_w.transpose(2, 3))  # (bg, cg, h, w)
+        x1 = self.gn(group_x * gate)                       # (bg, cg, h, w)
+
+        # === local branch ===
+        x2 = self.conv3x3(group_x)                         # (bg, cg, h, w)
+
+        # === cross-spatial learning (same shapes as repo) ===
+        # agp(x) == mean over H and W
+        a1 = x1.mean(dim=(2, 3), keepdim=False)            # (bg, cg)
+        a2 = x2.mean(dim=(2, 3), keepdim=False)            # (bg, cg)
+
+        # softmax over channel dimension cg, then shape to (bg, 1, cg)
+        x11 = self.softmax(a1).unsqueeze(1)                # (bg, 1, cg)
+        x21 = self.softmax(a2).unsqueeze(1)                # (bg, 1, cg)
+
+        # flatten spatial to (bg, cg, hw)
+        x12 = x2.flatten(2)                                # (bg, cg, hw)
+        x22 = x1.flatten(2)                                # (bg, cg, hw)
+
+        # (bg,1,cg) x (bg,cg,hw) -> (bg,1,hw)
+        weights = torch.bmm(x11, x12) + torch.bmm(x21, x22)
+        weights = weights.view(bg, 1, h, w)
+
+        out = group_x * torch.sigmoid(weights)
+        return out.view(b, c, h, w)
 
 
 class CoordAtt(nn.Module):
