@@ -112,6 +112,7 @@ from .attention import (
     EMA_TIR,
     EMA_orig,
 )
+from .dcn_block import C3k2_DCN
 
 __all__ = (
     "AIFI",
@@ -202,4 +203,6 @@ __all__ = (
     'EMA_TIR',
     'EMA_orig',
     'EMA_orig_fast',
+
+    'C3k2_DCN',
 )
