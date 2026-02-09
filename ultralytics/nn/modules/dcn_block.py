@@ -35,15 +35,21 @@ class DCNv2Block(nn.Module):
             c1, c2, kernel_size,
             stride=stride, padding=padding, groups=groups, bias=False,
         )
-        self.bn = nn.BatchNorm2d(c2)
+        # GroupNorm: works with any spatial size (including 1x1) and small batches
+        num_groups = min(32, c2)
+        while c2 % num_groups != 0:
+            num_groups -= 1
+        self.gn = nn.GroupNorm(num_groups, c2)
         self.act = nn.SiLU(inplace=True)
 
     def forward(self, x):
         k2 = self.kernel_size ** 2
         out = self.offset_conv(x)
         offset = out[:, :2 * k2, :, :]
+        # Clamp offsets to prevent segfault from NaN/inf (e.g. torch.empty in thop profiling)
+        offset = offset.clamp(-64.0, 64.0).nan_to_num(0.0)
         mask = torch.sigmoid(out[:, 2 * k2:, :, :])
-        return self.act(self.bn(self.dcn(x, offset, mask)))
+        return self.act(self.gn(self.dcn(x, offset, mask)))
 
 
 class Bottleneck_DCN(nn.Module):
