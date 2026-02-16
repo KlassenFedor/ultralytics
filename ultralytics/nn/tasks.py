@@ -98,7 +98,7 @@ from ultralytics.utils.torch_utils import (
     time_sync,
 )
 from ultralytics.nn.modules.attention import EMA, LCA, CoordAtt, EMA_TIR, EMA_orig, EMA_orig_fast
-from ultralytics.nn.modules.dcn_block import C3k2_DCN
+from ultralytics.nn.modules.dcn_block import C3k2_DCN, C3k2_DCN_MG, C3k2_DCN_DL, C3k2_DCN_SE
 
 
 class BaseModel(torch.nn.Module):
@@ -1586,6 +1586,9 @@ def parse_model(d, ch, verbose=True):
             C2f,
             C3k2,
             C3k2_DCN,
+            C3k2_DCN_MG,
+            C3k2_DCN_DL,
+            C3k2_DCN_SE,
             RepNCSPELAN4,
             ELAN1,
             ADown,
@@ -1613,6 +1616,9 @@ def parse_model(d, ch, verbose=True):
             C2f,
             C3k2,
             C3k2_DCN,
+            C3k2_DCN_MG,
+            C3k2_DCN_DL,
+            C3k2_DCN_SE,
             C2fAttn,
             C3,
             C3TR,
@@ -1650,7 +1656,7 @@ def parse_model(d, ch, verbose=True):
             if m in repeat_modules:
                 args.insert(2, n)  # number of repeats
                 n = 1
-            if m is C3k2 or m is C3k2_DCN:  # for M/L/X sizes
+            if m in {C3k2, C3k2_DCN, C3k2_DCN_MG, C3k2_DCN_DL, C3k2_DCN_SE}:  # for M/L/X sizes
                 legacy = False
                 if scale in "mlx":
                     args[3] = True
