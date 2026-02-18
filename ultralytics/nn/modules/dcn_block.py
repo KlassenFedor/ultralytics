@@ -69,7 +69,7 @@ class DCNv2Block_MG(nn.Module):
     offset_groups=4: 4 groups of channels each attend to different spatial locations.
     """
 
-    def __init__(self, c1, c2, kernel_size=3, stride=1, groups=1, offset_groups=4):
+    def __init__(self, c1, c2, kernel_size=3, stride=1, groups=1, offset_groups=2):
         super().__init__()
         self.kernel_size = kernel_size
         self.offset_groups = offset_groups
@@ -151,7 +151,7 @@ class DCNv2Block_SE(nn.Module):
     SE reweights channels after deformable convolution.
     """
 
-    def __init__(self, c1, c2, kernel_size=3, stride=1, groups=1, reduction=16):
+    def __init__(self, c1, c2, kernel_size=3, stride=1, groups=1, reduction=4):
         super().__init__()
         self.kernel_size = kernel_size
         padding = kernel_size // 2
