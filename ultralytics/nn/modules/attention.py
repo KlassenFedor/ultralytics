@@ -173,14 +173,14 @@ class CoordAtt(nn.Module):
 
 
 class LCA(nn.Module):
-    """Lightweight Coordinate Attention (ALSS-YOLO 2024)"""
+    """Lightweight Coordinate Attention (ALSS-YOLO 2024) — incorrect variant (shared bottleneck)"""
     def __init__(self, c1, c2=None, reduction=32):
         super().__init__()
         c2 = c2 or c1
         self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
         self.pool_w = nn.AdaptiveAvgPool2d((1, None))
         mip = max(8, c1 // reduction)
-        
+
         # Depthwise separable convolution
         self.conv1 = nn.Sequential(
             nn.Conv2d(c1, c1, 1, groups=c1),  # Depthwise
@@ -194,19 +194,56 @@ class LCA(nn.Module):
     def forward(self, x):
         identity = x
         n, c, h, w = x.size()
-        
+
         x_h = self.pool_h(x)
         x_w = self.pool_w(x).permute(0, 1, 3, 2)
         y = torch.cat([x_h, x_w], dim=2)
         y = self.act(self.bn1(self.conv1(y)))
-        
+
         x_h, x_w = torch.split(y, [h, w], dim=2)
         x_w = x_w.permute(0, 1, 3, 2)
-        
+
         a_h = self.conv_h(x_h).sigmoid()
         a_w = self.conv_w(x_w).sigmoid()
-        
+
         return identity * a_w * a_h
+
+
+class LCA_orig(nn.Module):
+    """Lightweight Coordinate Attention — faithful to ALSS-YOLO paper (eq. 10-12).
+
+    Independent depthwise separable 1x1 branches for H and W (no shared bottleneck).
+    F_h and F_w operate at full channel dimension C.
+    """
+
+    def __init__(self, c1, c2=None):
+        super().__init__()
+        c2 = c2 or c1
+        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
+        self.pool_w = nn.AdaptiveAvgPool2d((1, None))
+
+        # F_h: depthwise separable 1x1 conv for height branch
+        self.f_h = nn.Sequential(
+            nn.Conv2d(c1, c1, 1, groups=c1, bias=False),  # depthwise
+            nn.Conv2d(c1, c2, 1, bias=True),               # pointwise
+        )
+        # F_w: depthwise separable 1x1 conv for width branch
+        self.f_w = nn.Sequential(
+            nn.Conv2d(c1, c1, 1, groups=c1, bias=False),  # depthwise
+            nn.Conv2d(c1, c2, 1, bias=True),               # pointwise
+        )
+
+    def forward(self, x):
+        # z_h: (B, C, H, 1), z_w: (B, C, 1, W)
+        z_h = self.pool_h(x)
+        z_w = self.pool_w(x)
+
+        # g_h = σ(F_h(z_h)), g_w = σ(F_w(z_w))  — eq. 10, 11
+        g_h = self.f_h(z_h).sigmoid()
+        g_w = self.f_w(z_w).sigmoid()
+
+        # y = x * g_h * g_w  — eq. 12
+        return x * g_h * g_w
     
 
 class EMA_TIR(nn.Module):

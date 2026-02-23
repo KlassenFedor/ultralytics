@@ -108,6 +108,7 @@ from .transformer import (
 from .attention import (
     EMA,
     LCA,
+    LCA_orig,
     CoordAtt,
     EMA_TIR,
     EMA_orig,
@@ -197,7 +198,8 @@ __all__ = (
     "v10Detect",
 
     'EMA',
-    'LCA', 
+    'LCA',
+    'LCA_orig',
     'CoordAtt',
 
     'EMA_TIR',
