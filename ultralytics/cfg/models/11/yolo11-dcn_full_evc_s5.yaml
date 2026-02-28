@@ -1,0 +1,43 @@
+# YOLO11 + DCN_full + C2PSA + CFP neck (EVC-S5 + GCR), no EMA
+# EVC-S5: c_evc=320, K=48, stem_k=5, mlp_ratio=4
+# Based on CRT-YOLO paper (2505.10825)
+
+# Parameters
+nc: 80
+scales:
+  n: [0.50, 0.25, 1024]
+  s: [0.50, 0.50, 1024]
+  m: [0.50, 1.00, 512]
+  l: [1.00, 1.00, 512]
+  x: [1.00, 1.50, 512]
+
+# Backbone (DCN_full with C2PSA, no EMA)
+backbone:
+  - [-1, 1, Conv, [64, 3, 2]]               # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]]              # 1-P2/4
+  - [-1, 2, C3k2_DCN, [256, False, 0.25]]   # 2
+  - [-1, 1, Conv, [256, 3, 2]]              # 3-P3/8
+  - [-1, 2, C3k2_DCN, [512, False, 0.25]]   # 4 → f3
+  - [-1, 1, Conv, [512, 3, 2]]              # 5-P4/16
+  - [-1, 2, C3k2_DCN, [512, True]]          # 6 → f4
+  - [-1, 1, Conv, [1024, 3, 2]]             # 7-P5/32
+  - [-1, 2, C3k2_DCN, [1024, True]]         # 8 → f5
+  - [-1, 1, SPPF, [1024, 5]]                # 9
+  - [-1, 2, C2PSA, [1024]]                  # 10
+
+# Head: CFP neck (EVC-S5 + GCR) → Detect
+head:
+  # EVC-S5: [c_evc=320, K=48, drop=0.1, stem_k=5, mlp_ratio=4]
+  - [-1, 1, EVC, [320, 48, 0.1, 5, 4]]     # 11 → EVC out (2*c_evc ch)
+
+  # GCR: regulate P4
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]  # 12
+  - [[-1, 6], 1, Concat, [1]]               # 13 concat with f4
+  - [-1, 1, Conv, [640, 1, 1]]              # 14 → regulated P4 (2*320)
+
+  # GCR: regulate P3
+  - [11, 1, nn.Upsample, [None, 4, "nearest"]]  # 15 upsample EVC 4x
+  - [[-1, 4], 1, Concat, [1]]               # 16 concat with f3
+  - [-1, 1, Conv, [640, 1, 1]]              # 17 → regulated P3 (2*320)
+
+  - [[17, 14, 11], 1, Detect, [nc]]         # 18 Detect(P3, P4, P5)
