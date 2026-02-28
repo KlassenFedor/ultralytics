@@ -99,7 +99,7 @@ from ultralytics.utils.torch_utils import (
 )
 from ultralytics.nn.modules.attention import EMA, LCA, LCA_orig, CoordAtt, EMA_TIR, EMA_orig, EMA_orig_fast
 from ultralytics.nn.modules.dcn_block import C3k2_DCN, C3k2_DCN_MG, C3k2_DCN_DL, C3k2_DCN_SE
-from ultralytics.nn.modules.cfp import EVC
+from ultralytics.nn.modules.cfp import EVC, LVC
 
 
 class BaseModel(torch.nn.Module):
@@ -1727,6 +1727,10 @@ def parse_model(d, ch, verbose=True):
             c_evc = make_divisible(min(args[0], max_channels) * width, 8)
             c2 = c_evc * 2  # EVC outputs Cat(MLP, LVC) = 2 * c_evc
             args = [c1, c_evc, *args[1:]]
+        elif m is LVC:
+            c1 = ch[f]
+            c2 = c1  # channel-preserving
+            args = [c1, *args[1:]]  # replace YAML nominal channels with actual c1, keep num_codes
         elif m is EMA_TIR:
             c1 = ch[f]
             # args из YAML: [1024, 32, 0.7, True, False, ...]

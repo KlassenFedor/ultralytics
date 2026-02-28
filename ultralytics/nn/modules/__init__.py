@@ -114,7 +114,7 @@ from .attention import (
     EMA_orig,
 )
 from .dcn_block import C3k2_DCN, C3k2_DCN_MG, C3k2_DCN_DL, C3k2_DCN_SE
-from .cfp import EVC
+from .cfp import EVC, LVC
 
 __all__ = (
     "AIFI",
@@ -213,4 +213,5 @@ __all__ = (
     'C3k2_DCN_SE',
 
     'EVC',
+    'LVC',
 )

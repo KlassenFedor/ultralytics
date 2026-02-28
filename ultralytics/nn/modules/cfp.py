@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-__all__ = ["EVC"]
+__all__ = ["EVC", "LVC"]
 
 
 class DropPath(nn.Module):
