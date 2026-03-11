@@ -352,3 +352,161 @@ class C3k2_DCN_SE(C3k2):
             else Bottleneck_DCN_SE(self.c, self.c, shortcut, g, k=(3, 3), e=1.0)
             for _ in range(n)
         )
+
+
+# =============================================================================
+# Depthwise Separable DCN — reduces irregular memory reads on CPU
+# =============================================================================
+
+class DCNv2Block_DW(nn.Module):
+    """Depthwise Separable DCNv2: depthwise deformable conv + pointwise conv.
+
+    Standard DCNv2 performs C_in irregular reads per spatial-kernel position.
+    Depthwise variant performs 1 read per position (groups=C_in), then mixes
+    channels via standard pointwise Conv2d (BLAS/SIMD-optimized).
+    """
+
+    def __init__(self, c1, c2, kernel_size=3, stride=1):
+        super().__init__()
+        self.kernel_size = kernel_size
+        padding = kernel_size // 2
+
+        # Offset + mask prediction (shared across all channels)
+        offset_channels = 3 * kernel_size * kernel_size
+        self.offset_conv = nn.Conv2d(
+            c1, offset_channels, kernel_size,
+            stride=stride, padding=padding, bias=True,
+        )
+        nn.init.zeros_(self.offset_conv.weight)
+        nn.init.zeros_(self.offset_conv.bias)
+
+        # Depthwise deformable conv
+        self.dcn_dw = DeformConv2d(
+            c1, c1, kernel_size,
+            stride=stride, padding=padding, groups=c1, bias=False,
+        )
+
+        # Pointwise conv for channel mixing (standard, BLAS-friendly)
+        self.pw = nn.Conv2d(c1, c2, 1, bias=False)
+
+        num_groups = min(32, c2)
+        while c2 % num_groups != 0:
+            num_groups -= 1
+        self.gn = nn.GroupNorm(num_groups, c2)
+        self.act = nn.SiLU(inplace=True)
+
+    def forward(self, x):
+        k2 = self.kernel_size ** 2
+        out = self.offset_conv(x)
+        offset = out[:, :2 * k2, :, :].clamp(-64.0, 64.0).nan_to_num(0.0)
+        mask = torch.sigmoid(out[:, 2 * k2:, :, :])
+        return self.act(self.gn(self.pw(self.dcn_dw(x, offset, mask))))
+
+
+class Bottleneck_DCN_DW(nn.Module):
+    """Bottleneck with Depthwise Separable DCNv2."""
+
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
+        super().__init__()
+        c_ = int(c2 * e)
+        self.cv1 = Conv(c1, c_, k[0], 1)
+        self.cv2 = DCNv2Block_DW(c_, c2, kernel_size=k[1])
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+
+
+class C3k_DCN_DW(C3):
+    """C3k with Depthwise Separable DCNv2 Bottleneck blocks."""
+
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, k=3):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        c_ = int(c2 * e)
+        self.m = nn.Sequential(
+            *(Bottleneck_DCN_DW(c_, c_, shortcut, g, k=(k, k), e=1.0) for _ in range(n))
+        )
+
+
+class C3k2_DCN_DW(C3k2):
+    """C3k2 with Depthwise Separable DCNv2 Bottleneck blocks."""
+
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
+        super().__init__(c1, c2, n, c3k, e, g=g, shortcut=shortcut)
+        self.m = nn.ModuleList(
+            C3k_DCN_DW(self.c, self.c, 2, shortcut, g) if c3k
+            else Bottleneck_DCN_DW(self.c, self.c, shortcut, g, k=(3, 3), e=1.0)
+            for _ in range(n)
+        )
+
+
+# =============================================================================
+# Large Kernel — CPU-friendly DCN replacement (no irregular memory access)
+# =============================================================================
+
+class LargeKernelBlock(nn.Module):
+    """Large depthwise kernel + pointwise as CPU-friendly DCN replacement.
+
+    Approximates DCN's expanded receptive field using regular memory access.
+    DWConv 7x7 covers spatial extent similar to typical DCN offset range
+    while being fully SIMD/Winograd/BLAS-compatible on CPU.
+    """
+
+    def __init__(self, c1, c2, kernel_size=7, stride=1):
+        super().__init__()
+        padding = kernel_size // 2
+
+        # Large depthwise conv for expanded receptive field
+        self.dw = nn.Conv2d(
+            c1, c1, kernel_size, stride=stride,
+            padding=padding, groups=c1, bias=False,
+        )
+
+        # Pointwise conv for channel mixing
+        self.pw = nn.Conv2d(c1, c2, 1, bias=False)
+
+        num_groups = min(32, c2)
+        while c2 % num_groups != 0:
+            num_groups -= 1
+        self.gn = nn.GroupNorm(num_groups, c2)
+        self.act = nn.SiLU(inplace=True)
+
+    def forward(self, x):
+        return self.act(self.gn(self.pw(self.dw(x))))
+
+
+class Bottleneck_LK(nn.Module):
+    """Bottleneck with Large Kernel block replacing 3x3 conv."""
+
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
+        super().__init__()
+        c_ = int(c2 * e)
+        self.cv1 = Conv(c1, c_, k[0], 1)
+        self.cv2 = LargeKernelBlock(c_, c2, kernel_size=7)
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+
+
+class C3k_LK(C3):
+    """C3k with Large Kernel Bottleneck blocks."""
+
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, k=3):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        c_ = int(c2 * e)
+        self.m = nn.Sequential(
+            *(Bottleneck_LK(c_, c_, shortcut, g, k=(k, k), e=1.0) for _ in range(n))
+        )
+
+
+class C3k2_LK(C3k2):
+    """C3k2 with Large Kernel Bottleneck blocks."""
+
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
+        super().__init__(c1, c2, n, c3k, e, g=g, shortcut=shortcut)
+        self.m = nn.ModuleList(
+            C3k_LK(self.c, self.c, 2, shortcut, g) if c3k
+            else Bottleneck_LK(self.c, self.c, shortcut, g, k=(3, 3), e=1.0)
+            for _ in range(n)
+        )
