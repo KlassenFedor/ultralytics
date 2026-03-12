@@ -98,7 +98,7 @@ from ultralytics.utils.torch_utils import (
     time_sync,
 )
 from ultralytics.nn.modules.attention import EMA, LCA, LCA_orig, CoordAtt, EMA_TIR, EMA_orig, EMA_orig_fast
-from ultralytics.nn.modules.dcn_block import C3k2_DCN, C3k2_DCN_MG, C3k2_DCN_DL, C3k2_DCN_SE, C3k2_DCN_DW, C3k2_LK
+from ultralytics.nn.modules.dcn_block import C3k2_DCN, C3k2_DCN_MG, C3k2_DCN_DL, C3k2_DCN_SE, C3k2_DCN_DW, C3k2_LK, C3k2_LK13, C3k2_LK_RepParam, C3k2_LK13_RepParam
 from ultralytics.nn.modules.cfp import EVC, LVC
 
 
@@ -1592,6 +1592,9 @@ def parse_model(d, ch, verbose=True):
             C3k2_DCN_SE,
             C3k2_DCN_DW,
             C3k2_LK,
+            C3k2_LK13,
+            C3k2_LK_RepParam,
+            C3k2_LK13_RepParam,
             RepNCSPELAN4,
             ELAN1,
             ADown,
@@ -1624,6 +1627,9 @@ def parse_model(d, ch, verbose=True):
             C3k2_DCN_SE,
             C3k2_DCN_DW,
             C3k2_LK,
+            C3k2_LK13,
+            C3k2_LK_RepParam,
+            C3k2_LK13_RepParam,
             C2fAttn,
             C3,
             C3TR,
@@ -1661,7 +1667,7 @@ def parse_model(d, ch, verbose=True):
             if m in repeat_modules:
                 args.insert(2, n)  # number of repeats
                 n = 1
-            if m in {C3k2, C3k2_DCN, C3k2_DCN_MG, C3k2_DCN_DL, C3k2_DCN_SE, C3k2_DCN_DW, C3k2_LK}:  # for M/L/X sizes
+            if m in {C3k2, C3k2_DCN, C3k2_DCN_MG, C3k2_DCN_DL, C3k2_DCN_SE, C3k2_DCN_DW, C3k2_LK, C3k2_LK13, C3k2_LK_RepParam, C3k2_LK13_RepParam}:  # for M/L/X sizes
                 legacy = False
                 if scale in "mlx":
                     args[3] = True

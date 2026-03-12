@@ -113,7 +113,7 @@ from .attention import (
     EMA_TIR,
     EMA_orig,
 )
-from .dcn_block import C3k2_DCN, C3k2_DCN_MG, C3k2_DCN_DL, C3k2_DCN_SE, C3k2_DCN_DW, C3k2_LK
+from .dcn_block import C3k2_DCN, C3k2_DCN_MG, C3k2_DCN_DL, C3k2_DCN_SE, C3k2_DCN_DW, C3k2_LK, C3k2_LK13, C3k2_LK_RepParam, C3k2_LK13_RepParam
 from .cfp import EVC, LVC
 
 __all__ = (
@@ -213,6 +213,9 @@ __all__ = (
     'C3k2_DCN_SE',
     'C3k2_DCN_DW',
     'C3k2_LK',
+    'C3k2_LK13',
+    'C3k2_LK_RepParam',
+    'C3k2_LK13_RepParam',
 
     'EVC',
     'LVC',

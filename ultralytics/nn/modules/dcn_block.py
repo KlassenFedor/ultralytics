@@ -12,6 +12,7 @@ Variants:
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torchvision.ops import DeformConv2d
 
 from ultralytics.nn.modules.conv import Conv
@@ -508,5 +509,184 @@ class C3k2_LK(C3k2):
         self.m = nn.ModuleList(
             C3k_LK(self.c, self.c, 2, shortcut, g) if c3k
             else Bottleneck_LK(self.c, self.c, shortcut, g, k=(3, 3), e=1.0)
+            for _ in range(n)
+        )
+
+
+# =============================================================================
+# Large Kernel 13×13 — increased receptive field
+# =============================================================================
+
+class Bottleneck_LK13(nn.Module):
+    """Bottleneck with Large Kernel 13×13 block."""
+
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
+        super().__init__()
+        c_ = int(c2 * e)
+        self.cv1 = Conv(c1, c_, k[0], 1)
+        self.cv2 = LargeKernelBlock(c_, c2, kernel_size=13)
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+
+
+class C3k_LK13(C3):
+    """C3k with Large Kernel 13×13 Bottleneck blocks."""
+
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, k=3):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        c_ = int(c2 * e)
+        self.m = nn.Sequential(
+            *(Bottleneck_LK13(c_, c_, shortcut, g, k=(k, k), e=1.0) for _ in range(n))
+        )
+
+
+class C3k2_LK13(C3k2):
+    """C3k2 with Large Kernel 13×13 Bottleneck blocks."""
+
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
+        super().__init__(c1, c2, n, c3k, e, g=g, shortcut=shortcut)
+        self.m = nn.ModuleList(
+            C3k_LK13(self.c, self.c, 2, shortcut, g) if c3k
+            else Bottleneck_LK13(self.c, self.c, shortcut, g, k=(3, 3), e=1.0)
+            for _ in range(n)
+        )
+
+
+# =============================================================================
+# Large Kernel with Structural Re-parameterization
+# Train: parallel DW branches (main + 5×5 + 3×3). Inference: fused single DW.
+# =============================================================================
+
+class LargeKernelBlock_RepParam(nn.Module):
+    """Large depthwise kernel with structural re-parameterization.
+
+    Training: main DW kernel + parallel 5×5 and 3×3 DW branches for richer gradients.
+    Inference: branches fused into single DW kernel (zero extra cost).
+    Reference: RepLKNet (Ding et al., CVPR 2022).
+    """
+
+    def __init__(self, c1, c2, kernel_size=7, stride=1):
+        super().__init__()
+        self.kernel_size = kernel_size
+        padding = kernel_size // 2
+
+        # Main large kernel branch
+        self.dw_main = nn.Conv2d(c1, c1, kernel_size, stride=stride,
+                                  padding=padding, groups=c1, bias=False)
+        # Parallel small kernel branches (enrich gradient flow during training)
+        self.dw_small1 = nn.Conv2d(c1, c1, 5, stride=stride,
+                                    padding=2, groups=c1, bias=False)
+        self.dw_small2 = nn.Conv2d(c1, c1, 3, stride=stride,
+                                    padding=1, groups=c1, bias=False)
+
+        # Pointwise + norm + act
+        self.pw = nn.Conv2d(c1, c2, 1, bias=False)
+        num_groups = min(32, c2)
+        while c2 % num_groups != 0:
+            num_groups -= 1
+        self.gn = nn.GroupNorm(num_groups, c2)
+        self.act = nn.SiLU(inplace=True)
+
+        self._fused = False
+
+    def forward(self, x):
+        if self._fused:
+            dw_out = self.dw_main(x)
+        else:
+            dw_out = self.dw_main(x) + self.dw_small1(x) + self.dw_small2(x)
+        return self.act(self.gn(self.pw(dw_out)))
+
+    def fuse_reparam(self):
+        """Merge parallel branches into main kernel for inference."""
+        if self._fused:
+            return
+        main_k = self.kernel_size
+        fused_weight = self.dw_main.weight.data.clone()
+        for branch in [self.dw_small1, self.dw_small2]:
+            bk = branch.kernel_size[0]
+            pad = (main_k - bk) // 2
+            fused_weight += F.pad(branch.weight.data, [pad, pad, pad, pad])
+        self.dw_main.weight.data = fused_weight
+        del self.dw_small1
+        del self.dw_small2
+        self._fused = True
+
+
+class Bottleneck_LK_RepParam(nn.Module):
+    """Bottleneck with re-parameterizable Large Kernel 7×7."""
+
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
+        super().__init__()
+        c_ = int(c2 * e)
+        self.cv1 = Conv(c1, c_, k[0], 1)
+        self.cv2 = LargeKernelBlock_RepParam(c_, c2, kernel_size=7)
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+
+
+class C3k_LK_RepParam(C3):
+    """C3k with re-parameterizable LK7 Bottleneck blocks."""
+
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, k=3):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        c_ = int(c2 * e)
+        self.m = nn.Sequential(
+            *(Bottleneck_LK_RepParam(c_, c_, shortcut, g, k=(k, k), e=1.0) for _ in range(n))
+        )
+
+
+class C3k2_LK_RepParam(C3k2):
+    """C3k2 with re-parameterizable LK7 Bottleneck blocks."""
+
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
+        super().__init__(c1, c2, n, c3k, e, g=g, shortcut=shortcut)
+        self.m = nn.ModuleList(
+            C3k_LK_RepParam(self.c, self.c, 2, shortcut, g) if c3k
+            else Bottleneck_LK_RepParam(self.c, self.c, shortcut, g, k=(3, 3), e=1.0)
+            for _ in range(n)
+        )
+
+
+# =============================================================================
+# Large Kernel 13×13 + Re-parameterization (RepLKNet-style)
+# =============================================================================
+
+class Bottleneck_LK13_RepParam(nn.Module):
+    """Bottleneck with re-parameterizable Large Kernel 13×13."""
+
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
+        super().__init__()
+        c_ = int(c2 * e)
+        self.cv1 = Conv(c1, c_, k[0], 1)
+        self.cv2 = LargeKernelBlock_RepParam(c_, c2, kernel_size=13)
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+
+
+class C3k_LK13_RepParam(C3):
+    """C3k with re-parameterizable LK13 Bottleneck blocks."""
+
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5, k=3):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        c_ = int(c2 * e)
+        self.m = nn.Sequential(
+            *(Bottleneck_LK13_RepParam(c_, c_, shortcut, g, k=(k, k), e=1.0) for _ in range(n))
+        )
+
+
+class C3k2_LK13_RepParam(C3k2):
+    """C3k2 with re-parameterizable LK13 Bottleneck blocks."""
+
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
+        super().__init__(c1, c2, n, c3k, e, g=g, shortcut=shortcut)
+        self.m = nn.ModuleList(
+            C3k_LK13_RepParam(self.c, self.c, 2, shortcut, g) if c3k
+            else Bottleneck_LK13_RepParam(self.c, self.c, shortcut, g, k=(3, 3), e=1.0)
             for _ in range(n)
         )
